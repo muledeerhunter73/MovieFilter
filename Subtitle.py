@@ -1,6 +1,10 @@
 import pysrt as pysrt
 import re as re
 
+class FilterWordAndLocation:
+    Subtitle = ""
+    Word = ""
+
 class FilterWords:
     OffensiveWord = ""
     ReplacementWord = ""
@@ -9,6 +13,7 @@ class FilterWords:
 class SubtitleHandler:
     subtitleList = []
     SubsWithLanguageList = []
+    LanguageList = []
     WordsToFilter = []
 
     def ReadWordsFromFilterFile(self): 
@@ -28,9 +33,16 @@ class SubtitleHandler:
         for sub in self.subtitleList:
             for word in self.WordsToFilter:
                 if(self.IsWordInString(sub.text.upper(), word.OffensiveWord)):
-                    self.SubsWithLanguageList.append(sub)
+                    temp = FilterWordAndLocation()
+                    temp.Subtitle = sub
+                    temp.Word = word.OffensiveWord
+                    self.SubsWithLanguageList.append(temp)
     
     def IsWordInString(self, string1, word):
         if re.search(r"\b" + re.escape(word) + r"\b", string1):
             return True
         return False
+    
+    def ConvertToMilliseconds(self, subTime):
+        return ((subTime.hours * subTime.HOURS_RATIO) + (subTime.minutes * subTime.MINUTES_RATIO) + 
+                (subTime.seconds * subTime.SECONDS_RATIO) + subTime.milliseconds)
