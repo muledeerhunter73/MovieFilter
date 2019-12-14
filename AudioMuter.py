@@ -1,4 +1,5 @@
 import os
+import json
 import subprocess as subprocess
 from datetime import datetime
 from google.cloud import speech_v1
@@ -12,20 +13,19 @@ class AudioMuter:
 
     muteString = ""
 
-    def convertTimes(self, startTimeOfPhrase, wordPosition):
-        return (startTimeOfPhrase + (wordPosition / 1000000)) / 1000
+    def ExtractVideo(self, videoFile, start, end):
+        #durTime = (end - start)
+        duration = str(end).split(",", 1)[0]
+        #startTime = str(start).split(",", 1)[0]
+        subprocess.call(["ffmpeg","-y","-hide_banner","-loglevel", "panic", "-ss", start, "-i", videoFile, "-t",duration , "-vcodec", "copy" , "-acodec", "copy", "TempVideo.mp4"])
 
     def ExtractAudio(self, videoFile, start, end):
-        durTime = end - start + 2000
-        duration = str(durTime).split(",", 1)[0]
-        startTime = str(start).split(",", 1)[0]
-        subprocess.call(["ffmpeg","-y", "-ss", startTime, "-i", videoFile, "-t",duration , "-q:a", "0" , "-map", "a", "TempAudio.mp3"])
-        self.convertAudio()
+        durTime = (end - start) + 2000
+        duration = str(durTime).replace(',', '.')
+        startTime = str(start).replace(',', '.')
+        subprocess.call(["ffmpeg","-y","-hide_banner", "-loglevel", "panic", "-ss", startTime, "-i", videoFile, "-t",duration , "-c:a", "flac", "TempAudio.flac"])
 
-    def convertAudio(self):
-        subprocess.call(["ffmpeg","-y", "-i", "TempAudio.mp3", "-c:a", "flac", "TempAudio.flac"])
-
-    def FindWordLocationGoogle(self, wordtoFind, audioFile):
+    def FindWordLocationGoogle(self, wordtoFind, audioFile, resultFilename):
         client = speech_v1.SpeechClient()
         language_code = "en-US"
         config = {
@@ -33,6 +33,8 @@ class AudioMuter:
             "language_code": language_code,
             "audio_channel_count": 2,
             "enable_separate_recognition_per_channel": True,
+            "speech_contexts": [{"phrases": wordtoFind}],
+            "model": "video",
         }
 
         with open(audioFile, 'rb') as audio_file:
@@ -46,12 +48,20 @@ class AudioMuter:
         else:
             # The first result includes start and end time word offsets
             result = response.results[0]
-            ''' Need to account for phrase words to filter'''
             # First alternative is the most probable result
             alternative = result.alternatives[0]
+            self.SaveToFile(resultFilename, alternative)
             times = self.GetStartAndEndTime(alternative.words, wordtoFind.lower())
             return times
         return False
+
+    def SaveToFile(self, filename, data):
+        with open(filename, 'a') as outFile:
+            outFile.write(str(data))
+
+    def ReadFromJsonFile(self, filename):
+        with open(filename) as inFile:
+            return json.load(inFile)
 
     def GetStartAndEndTime(self, phrase, filterWord):
         if (' ' in filterWord):
@@ -88,12 +98,18 @@ class AudioMuter:
         editedVideoName = "{0}_{2}.{1}".format(*videoFile.rsplit('.', 1) + ["edited"])
         subprocess.call(["ffmpeg","-y", "-i", videoFile, "-af", self.muteString, editedVideoName])
 
-    def addWordTimesToString(self, startTimeOfPhrase, startOfWord, endOfWord):
-        startMute = self.convertTimes(startTimeOfPhrase, startOfWord)
-        endMute = self.convertTimes(startTimeOfPhrase, endOfWord)
+    def convertTimes(self, startTimeOfPhrase, wordPosition):
+        return (startTimeOfPhrase + (wordPosition / 1000000)) / 1000
+        
+    def addWordTimesToString(self, startTimeOfPhrase, startOfWord, endOfWord, startOffset, endOffset, movieName):
+        startMute = self.convertTimes(startTimeOfPhrase, startOfWord) + startOffset
+        endMute = self.convertTimes(startTimeOfPhrase, endOfWord) + endOffset
 
         if (self.muteString == ""):
             self.muteString = "volume=enable='between(t," + str(startMute) +"," + str(endMute) +")':volume=0"
         else:
             self.muteString = self.muteString + ", volume=enable='between(t," + str(startMute) +"," + str(endMute) +")':volume=0"
+
+        with open("muteString" + movieName + ".txt", 'w') as infile:
+            infile.write(self.muteString)
 

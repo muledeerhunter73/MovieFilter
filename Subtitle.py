@@ -43,6 +43,13 @@ class SubtitleHandler:
             return True
         return False
     
+    # Probably don't need this function
     def ConvertToMilliseconds(self, subTime):
         return ((subTime.hours * subTime.HOURS_RATIO) + (subTime.minutes * subTime.MINUTES_RATIO) + 
                 (subTime.seconds * subTime.SECONDS_RATIO) + subTime.milliseconds)
+
+    def SaveResultsToFile(self,filename):
+        with open(filename, 'w') as infile:
+            for item in self.SubsWithLanguageList:
+                infile.write(str(item.Subtitle.start).split(",", 1)[0])
+                infile.write("\n\t" + item.Word + "\n")
