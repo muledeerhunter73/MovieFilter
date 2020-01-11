@@ -9,6 +9,11 @@ class FilterTimes:
     startTime = ""
     endTime = ""
 
+class MuteStringTimes:
+    startPhraseTime = 0
+    startWordTime = 0
+    endWordTime = 0
+
 class AudioMuter:
 
     muteString = ""
@@ -101,15 +106,41 @@ class AudioMuter:
     def convertTimes(self, startTimeOfPhrase, wordPosition):
         return (startTimeOfPhrase + (wordPosition / 1000000)) / 1000
         
-    def addWordTimesToString(self, startTimeOfPhrase, startOfWord, endOfWord, startOffset, endOffset, movieName):
-        startMute = self.convertTimes(startTimeOfPhrase, startOfWord) + startOffset
-        endMute = self.convertTimes(startTimeOfPhrase, endOfWord) + endOffset
+    def addWordTimesToString(self, startTimeOfPhrase, startOfWord, endOfWord, startOffset, endOffset, movieName, readFile = False):
+        if (readFile):
+            with open("muteStringTimes" + movieName + ".txt") as infile:
+                for line in infile:
+                    splitLine = line.split(',')
+                    startTimeOfPhrase = splitLine[0]
+                    startOfWord = splitLine[1]
+                    endOfWord = splitLine[2]
+        
+        startMute = "{:.2f}".format(self.convertTimes(startTimeOfPhrase, startOfWord) + startOffset)
+        endMute = "{:.2f}".format(self.convertTimes(startTimeOfPhrase, endOfWord) + endOffset)
 
         if (self.muteString == ""):
             self.muteString = "volume=enable='between(t," + str(startMute) +"," + str(endMute) +")':volume=0"
         else:
             self.muteString = self.muteString + ", volume=enable='between(t," + str(startMute) +"," + str(endMute) +")':volume=0"
 
+        self.WriteWordTimesToFile(startTimeOfPhrase, startOfWord, endOfWord, movieName)
         with open("muteString" + movieName + ".txt", 'w') as infile:
             infile.write(self.muteString)
 
+    def WriteWordTimesToFile(self, startTimePhrase, startWordTime, endWordTime, movieName):
+        with open("muteStringTimes" + movieName + ".txt", 'a') as outfile:
+            outfile.write(str(startTimePhrase) + "," + str(startWordTime) + "," + str(endWordTime))
+    
+    def ReadWordTimesFromFile(self, movieName):
+        fileTimes = []
+        with open("muteStringTimes" + movieName + ".txt") as infile:
+            for line in infile:
+                tempTimes = MuteStringTimes()
+                line = line.rstrip()
+                splitLine = line.split(',')
+                tempTimes.startPhraseTime = float(splitLine[0])
+                tempTimes.startWordTime = float(splitLine[1])
+                tempTimes.endWordTime = float(splitLine[2])
+                fileTimes.append(tempTimes)
+        return fileTimes
+                
