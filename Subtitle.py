@@ -1,5 +1,6 @@
 import pysrt as pysrt
 import re as re
+import string
 
 class FilterWordAndLocation:
     Subtitle = ""
@@ -31,12 +32,21 @@ class SubtitleHandler:
 
     def FindProfanity(self):
         for sub in self.subtitleList:
+            sub.text = sub.text.lower()
+            if("he'll" in sub.text):
+               sub.text = sub.text.replace("he'll", "NotaSwear") 
+            sub.text = sub.text.translate(str.maketrans('', '', string.punctuation)) # Remove punctuation from text.
             for word in self.WordsToFilter:
                 if(self.IsWordInString(sub.text.upper(), word.OffensiveWord)):
                     temp = FilterWordAndLocation()
                     temp.Subtitle = sub
                     temp.Word = word.OffensiveWord
-                    self.SubsWithLanguageList.append(temp)
+                    if(len(self.SubsWithLanguageList) != 0):
+                        last_found = self.SubsWithLanguageList[-1]
+                        if(last_found.Subtitle.start != sub.start):
+                            self.SubsWithLanguageList.append(temp)
+                    else:
+                       self.SubsWithLanguageList.append(temp) 
     
     def IsWordInString(self, string1, word):
         if re.search(r"\b" + re.escape(word) + r"\b", string1):

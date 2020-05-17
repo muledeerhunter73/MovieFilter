@@ -1,9 +1,13 @@
 import os
 import json
+import string
 import subprocess as subprocess
 from datetime import datetime
 from google.cloud import speech_v1
 from google.cloud.speech import types
+from Bio import pairwise2
+from Bio.pairwise2 import format_alignment
+from fuzzywuzzy import fuzz
 
 class FilterTimes:
     startTime = ""
@@ -25,18 +29,21 @@ class AudioMuter:
         subprocess.call(["ffmpeg","-y","-hide_banner","-loglevel", "panic", "-ss", start, "-i", videoFile, "-t",duration , "-vcodec", "copy" , "-acodec", "copy", "TempVideo.mp4"])
 
     def ExtractAudio(self, videoFile, start, end):
-        durTime = (end - start) + 2000
+        if os.path.exists("TempAudio.flac"):
+            os.remove("TempAudio.flac")
+        durTime = end - start
         duration = str(durTime).replace(',', '.')
         startTime = str(start).replace(',', '.')
         subprocess.call(["ffmpeg","-y","-hide_banner", "-loglevel", "panic", "-ss", startTime, "-i", videoFile, "-t",duration , "-c:a", "flac", "TempAudio.flac"])
 
-    def FindWordLocationGoogle(self, wordtoFind, audioFile, resultFilename):
+    def FindWordLocationGoogle(self, wordtoFind, audioFile, resultFilename, subPhrase):
         client = speech_v1.SpeechClient()
         language_code = "en-US"
         config = {
             "enable_word_time_offsets": True,
             "language_code": language_code,
             "audio_channel_count": 2,
+            "max_alternatives": 3,
             "enable_separate_recognition_per_channel": True,
             "speech_contexts": [{"phrases": wordtoFind}],
             "model": "video",
@@ -53,16 +60,27 @@ class AudioMuter:
         else:
             # The first result includes start and end time word offsets
             result = response.results[0]
-            # First alternative is the most probable result
-            alternative = result.alternatives[0]
-            self.SaveToFile(resultFilename, alternative)
-            times = self.GetStartAndEndTime(alternative.words, wordtoFind.lower())
-            return times
+            # Go through all alernatives until found
+            for alternative in result.alternatives:
+                self.SaveToFile(resultFilename, alternative.transcript)
+                times = self.GetStartAndEndTime(alternative.words, wordtoFind.lower())
+                if(times != False):
+                    return times
+            
+            #Find profanity with string alignment
+            googlePhrase = result.alternatives[0].transcript.lower()
+            googlePhrase = googlePhrase.translate(str.maketrans('', '', string.punctuation))
+            googleWordList = result.alternatives[0].words
+            startEnd = self.AlignStrings(googlePhrase, subPhrase, wordtoFind.lower())
+            if(startEnd != False):
+                times = self.setStartAndEnd(googleWordList[startEnd[0]], googleWordList[startEnd[1]])
+                return times
+        
         return False
 
     def SaveToFile(self, filename, data):
         with open(filename, 'a') as outFile:
-            outFile.write(str(data))
+            outFile.write(str(data) + "\n")
 
     def ReadFromJsonFile(self, filename):
         with open(filename) as inFile:
@@ -72,12 +90,12 @@ class AudioMuter:
         if (' ' in filterWord):
             splitString = filterWord.split(' ')
             for i in range(len(phrase)):
-                if(phrase[i].word.lower() == splitString[0]):
+                if(splitString[0] in self.UpdateGoogleWord(phrase[i].word.lower())):
                     endLocation = -1
                     counter = 1
                     while True:
                         if(counter < len(splitString)):
-                            if(phrase[i + counter].word.lower() == splitString[counter]):
+                            if(splitString[counter] in self.UpdateGoogleWord(phrase[i + counter].word.lower())):
                                 endLocation = i + counter
                                 counter = counter + 1
                             else:
@@ -86,7 +104,7 @@ class AudioMuter:
                             return self.setStartAndEnd(phrase[i], phrase[endLocation])
         else:
             for word in phrase:
-                if(word.word.lower() == filterWord):
+                if(filterWord == self.UpdateGoogleWord(word.word.lower())):
                     return self.setStartAndEnd(word, word)
         return False
 
@@ -106,15 +124,7 @@ class AudioMuter:
     def convertTimes(self, startTimeOfPhrase, wordPosition):
         return (startTimeOfPhrase + (wordPosition / 1000000)) / 1000
         
-    def addWordTimesToString(self, startTimeOfPhrase, startOfWord, endOfWord, startOffset, endOffset, movieName, readFile = False):
-        if (readFile):
-            with open("muteStringTimes" + movieName + ".txt") as infile:
-                for line in infile:
-                    splitLine = line.split(',')
-                    startTimeOfPhrase = splitLine[0]
-                    startOfWord = splitLine[1]
-                    endOfWord = splitLine[2]
-        
+    def addWordTimesToString(self, startTimeOfPhrase, startOfWord, endOfWord, startOffset, endOffset, movieName):
         startMute = "{:.2f}".format(self.convertTimes(startTimeOfPhrase, startOfWord) + startOffset)
         endMute = "{:.2f}".format(self.convertTimes(startTimeOfPhrase, endOfWord) + endOffset)
 
@@ -129,7 +139,7 @@ class AudioMuter:
 
     def WriteWordTimesToFile(self, startTimePhrase, startWordTime, endWordTime, movieName):
         with open("muteStringTimes" + movieName + ".txt", 'a') as outfile:
-            outfile.write(str(startTimePhrase) + "," + str(startWordTime) + "," + str(endWordTime))
+            outfile.write(str(startTimePhrase) + "," + str(startWordTime) + "," + str(endWordTime) + "\n")
     
     def ReadWordTimesFromFile(self, movieName):
         fileTimes = []
@@ -143,4 +153,46 @@ class AudioMuter:
                 tempTimes.endWordTime = float(splitLine[2])
                 fileTimes.append(tempTimes)
         return fileTimes
-                
+
+    def UpdateGoogleWord(self, word):
+        word = word.translate(str.maketrans('', '', string.punctuation)) # Remove punctuation from text.
+        with open("WordsToReplace.txt") as infile:
+            for line in infile:
+                line = line.rstrip()
+                splitline = line.split(',')
+                if(word == splitline[0]):
+                    return splitline[1]
+        return word
+
+    def AlignStrings(self, googlePhrase, subPhrase, whatToFilter):
+        if(fuzz.partial_ratio(googlePhrase, subPhrase) > 65):
+            subWordList = subPhrase.split(' ')
+            googleWordList = googlePhrase.split(' ')
+            alignment = pairwise2.align.globalxx(googlePhrase,subPhrase)
+            googleAligned = alignment[0][0]
+            subAligned = alignment[0][1]
+            return self.FindPhraseStartAndEnd(googleAligned, subAligned,whatToFilter)
+        return False      
+
+    def FindPhraseStartAndEnd(self,googleAligned, subAligned, filterPhrase):
+        googleStartCounter = 0
+        googleEndCounter = 0
+        phraseCounter = 0
+        googleWordCounter = 0
+        for i, char in enumerate(subAligned):
+            if(googleAligned[i] == ' '):
+                googleWordCounter += 1
+            if(phraseCounter == len(filterPhrase) - 1):
+                googleEndCounter = googleWordCounter
+                return [googleStartCounter, googleEndCounter]
+            if(phraseCounter == 0 and subAligned[i] == filterPhrase[0]):
+                googleStartCounter = googleWordCounter
+                phraseCounter += 1
+            elif(phraseCounter > 0 and subAligned[i] == filterPhrase[phraseCounter]):
+                phraseCounter += 1
+            elif(phraseCounter > 0 and subAligned[i] == '-' ):
+                continue
+            else:
+                googleStartCounter = 0
+                phraseCounter = 0
+        return False
